@@ -169,6 +169,7 @@ if(!datEnough){
 
 ```{r stats-run-permanova, eval = datEnough}
 pmv <- adonis2(resp_pm ~ Vegetation_Zone*Time_group, data = expl_pm,
+               by = "terms",
         method = "bray",
         permutations = 999)
 
