@@ -1,0 +1,401 @@
+---
+title: ''
+output: html_document
+---
+
+```{r}
+library(vegan)
+library(ggrepel)
+library(ggiraph)
+```
+
+## About  
+
+These tabs are the multivariate analyses.  
+
+```{r mod-multivar-df}
+# use data frame where unvegetated 'species' are grouped by nmst categories
+# dat_multivar <- dat_nmst_cats
+
+# use the entire data frame - only group up for loading factors of interest
+dat_multivar <- dat %>% 
+    select(-any_of(c("EIR", "swdiv", "richness")))
+```
+
+```{r}
+# remove any plots without at least 3 distinct years of data
+dat_multivar <- filter(dat_multivar, !(StTrnsPlt %in% not_enough$StTrnsPlt))
+```
+
+```{r, results = "asis"}
+# if there weren't enough years of data, can't do the rest.
+# set up to NOT evaluate code chunks, and spit out a message.
+datEnough <- nrow(dat_multivar) > 0
+
+if(!datEnough){
+    cat("### **Multivariate analyses were not run.**")
+    cat("\n \nThere were not enough rows of data.")
+}
+```
+
+
+In this section, we use ordination to visualize and analyze plant communities through plot-level cover data and explanatory variables (e.g., distance to water, elevation, salinity) across sites and marsh zones, when appropriate. Non-metric multidimensional scaling (NMDS) with loading factors (when appropriate) will be used to visualize the data. Loading factors can be key species or groupings (e.g., dominant species, bare, halophytes) or explanatory variables. We also plan to use  similarity analysis (SIMPER) to identify which cover categories are contributing to dissimilarity. A PERMANOVA incorporating appropriate explanatory variables (e.g., site, zone) will also be used to test for differences between years (test comparing first and last years may have the greatest power).
+  
+
+
+### Questions addressed  
+
+-  Are there shifts in the vegetation community (as defined by the entire percent-cover matrix) over time? Do these shifts vary by vegetation zone?  
+    -  addressed with PERMANOVA, comparing first two and most recent two years of monitoring. (If there are <4 years of data, only the first and last year are compared)  
+    -  if overall PERMANOVA indicated significant change (p < 0.05), follow-up pairwise PERMANOVAs were run comparing first vs. last years for each zone.  
+-  Which species/groups contribute most to these shifts?  
+    -  addressed using SIMPER, comparing first and last year(s) of monitoring data within each zone. SIMPER is only used to follow up on vegetation zones that indicated a significant community difference in the PERMANOVA.  
+-  Where is the plant community changing, and what characteristics do those areas have in common (e.g. site, zone, distance from water, elevation)?  
+    -  visualized via NMDS.  
+
+### Reserve output choices  
+
+The following species/groups were identified by the reserve as important loading factors to display on NMDS outputs.  
+
+Sometimes these species do not appear on the plots; usually that is because all data points for that species were 0 or very close to it.     
+
+```{r show-userChoice-multivar, results = 'asis'}
+choices <- anaSpec_list$multivar$Choice
+choices <- choices[!is.na(choices)]
+cat("Up to 8 species/groups could be identified specifically in outputs of these multivariate analyses. Reserve choices are: \n")
+```
+
+```{r userChoice-2, results = 'asis'}
+cat(paste("*", choices), sep="\n")
+```
+
+
+
+```{r stats-define-matrices, eval = datEnough}
+expl <- dat_multivar[, 1:which(names(dat_multivar) == "Total")]
+resp <- dat_multivar[, (1 + which(names(dat_multivar) == "Total")):ncol(dat_multivar)]
+
+expl$Zone_Year <- paste(expl$Vegetation_Zone, expl$Year)
+
+env <- expl %>% 
+    select(Vegetation_Zone, Year,
+           Zone_Year) %>% 
+    mutate(across(everything(), as.factor))
+```
+
+### Characteristics of multivariate data frame  
+
+```{r mod-first-last-years, eval = datEnough}
+# find first and last years by zone
+start_ends <- dat_multivar %>% 
+    group_by(Vegetation_Zone, Year) %>% 
+    tally() %>% 
+    group_by(Vegetation_Zone) %>% 
+    summarize(Start = min(Year),
+              startb = min(Year) + 1,
+              endb = max(Year) - 1,
+              End = max(Year))
+
+keeps <- start_ends %>% 
+    pivot_longer(Start:End, 
+                 names_to = "Time_group",
+                 values_to = "Year") %>% 
+    mutate(Time_group = case_match(Time_group,
+                                   "startb" ~ "Start",
+                                   "endb" ~ "End",
+                                   .default = Time_group))
+
+# subset data frames to first and last years by Zone
+expl <- expl %>% 
+    left_join(keeps)
+fl_index <- !is.na(expl$Time_group)
+
+expl_pm <- expl[fl_index, ]
+resp_pm <- resp[fl_index, ]
+
+expl_pm$Zone_Timegroup <- paste(expl_pm$Vegetation_Zone, expl_pm$Time_group, sep = "; ")
+
+env_pm <- expl_pm %>% 
+    select(Vegetation_Zone, Time_group,
+           Zone_Timegroup) %>% 
+    mutate(across(everything(), as.factor))
+```
+
+
+```{r show-start-end, eval = datEnough}
+expl_pm %>% 
+    group_by(Vegetation_Zone, Time_group, Year) %>% 
+    tally() %>% 
+    ungroup() %>% 
+    mutate(Year_n = paste0(Year, " (", n, ")")) %>% 
+    group_by(Vegetation_Zone, Time_group) %>% 
+    summarize(Year_n = paste(unique(Year_n), collapse = " - ")) %>% 
+    pivot_wider(names_from = Time_group,
+                values_from = Year_n) %>% 
+    relocate(Start, .before = End) %>% 
+    kbl_nmst(caption = "Years in 'Start' and 'End' time groups for each Vegetation Zone. Number in parentheses is number of samples.",
+             align = c("l", "c", "c"))
+
+
+keeps2 <- expl_pm %>% 
+    group_by(Vegetation_Zone, Time_group) %>% 
+    summarize(Years = paste(unique(Year), collapse = ", "))
+```
+
+
+```{r show-multivar-df, eval = datEnough}
+resp_names <- data.frame(names(resp))
+kbl_nmst(resp_names,
+         col.names = c(""),
+         caption = "Species/Groups included in response matrix") %>%
+    scroll_box(width = "300px", height = "400px") 
+```
+
+
+
+
+## PERMANOVA  
+
+```{r, results = "asis"}
+# if there weren't enough years of data, can't do the rest.
+# set up to NOT evaluate code chunks, and spit out a message.
+datEnough <- nrow(dat_multivar) > 0
+
+if(!datEnough){
+    cat("### **Multivariate analyses were not run.**")
+    cat("\n \nThere were not enough rows of data.")
+}
+```
+
+```{r stats-run-permanova, eval = datEnough}
+pmv <- adonis2(resp_pm ~ Vegetation_Zone*Time_group, data = expl_pm,
+        method = "bray",
+        permutations = 999)
+
+
+kbl_nmst(pmv,
+      digits = c(0, 2, 4, 2, 4),
+      caption = "PERMANOVA table") 
+```
+
+
+```{r stats-perm-posthoc, eval = datEnough}
+# for both follow-ups, want each zone on its own, start vs. end
+
+zones <- unique(expl_pm$Vegetation_Zone)
+pmvs <- list()
+simps <- list()
+
+for(i in seq_along(zones)){
+    # subset data to this zone
+    zn = zones[i]
+    tmp_index <- which(expl_pm$Vegetation_Zone == zn)
+    tmp_resp <- resp_pm[tmp_index, ]
+    tmp_expl <- expl_pm[tmp_index, ]
+    
+    # run permanova
+    pmvt <- adonis2(tmp_resp ~ Time_group, data = tmp_expl,
+                    method = "bray", by = "terms")
+    
+    # save formatted output to list
+    pmvs[[i]] <- broom::tidy(pmvt)
+    names(pmvs)[[i]] <- as.character(zn)
+    
+    # if permanova p-value was below 0.2, run SIMPER
+    if(pmvt$`Pr(>F)`[row.names(pmvt) == "Time_group"] < 0.200){
+        # run simper
+        simp <- simper(tmp_resp, tmp_expl$Time_group)
+        
+        # format output
+        simp_df <- summary(simp, ordered = TRUE)$Start_End[1:6, c("average", "sd", "cumsum", "p", "ava", "avb")]
+        # in case there are fewer than 6 species, get rid of empty rows
+        simp_df <- janitor::remove_empty(simp_df, "rows")
+        simp_smaller <- data.frame(lapply(simp_df, round, 4))
+        simp_smaller$ava <- round(simp_smaller$ava, 1)
+        simp_smaller$avb <- round(simp_smaller$avb, 1)
+        row.names(simp_smaller) <- row.names(simp_df)
+        names(simp_smaller) <- c("average", "sd", "cumulative", "p", "mean_start", "mean_end")
+        
+        # save output to list
+        simps[[i]] <- simp_smaller
+        
+        # if permanova wasn't significant, save a placeholder in the list   
+    } else {
+        simps[[i]] <- data.frame("None" = "SIMPER not run")
+    }
+    
+    names(simps)[[i]] <- as.character(zn)
+}
+```
+
+
+### Post-hoc output  
+
+Was there a community difference between "Start" (first 2 years) and "End" (last 2 years) for each zone?  
+
+```{r show-perm-posthoc, eval = datEnough}
+pmvs_summ <- bind_rows(pmvs, .id = "Vegetation Zone") %>% 
+    filter(term == "Time_group") %>% 
+    select('Vegetation Zone', R2, p.value) %>% 
+    mutate(Bonferroni_p.value = p.adjust(p.value, method = "bonferroni"))
+
+kbl_nmst(pmvs_summ,
+      digits = 4,
+      caption = "Summary of pairwise PERMANOVAs testing community difference between first and most recent years of monitoring")
+```
+
+
+
+<details><summary>Click to see complete anova tables for each pairwise comparison</summary>  
+
+Note - these individual tables do not contain Bonferroni-adjusted p-values; only the raw values.  
+
+```{r show-pairwise-perm, results = 'asis', eval = datEnough}
+for(i in seq_along(pmvs)){
+    print(kbl_nmst(x = pmvs[[i]], 
+                caption = paste0("Pairwise results for Vegetation Zone ", names(pmvs)[i]),
+                digits = c(0, 0, 2, 4, 2, 4))
+          )
+}
+```
+
+</details>
+
+## SIMPER  
+
+```{r, results = "asis"}
+# if there weren't enough years of data, can't do the rest.
+# set up to NOT evaluate code chunks, and spit out a message.
+datEnough <- nrow(dat_multivar) > 0
+
+if(!datEnough){
+    cat("### **Multivariate analyses were not run.**")
+    cat("\n \nThere were not enough rows of data.")
+}
+```
+
+If the PERMANOVA for a single zone had p-value < 0.2; *not* adjusted for multiple comparisons due to exploratory nature of these analyses, and note this does **not** represent a significant difference, a SIMPER was performed. **Please check the 'Post-hoc output' table in the PERMANOVA tab for the p-value, and be cautious in interpretation.** 
+
+The top 6 species in output are below.  
+
+"average" is the average contribution of that species to the Bray-Curtis distance between the two groups (note, this is *not* expressed in % and the column does not total to 1); "sd" is the standard deviation of the species' contribution. "cumulative" is the cumulative % contribution for this species and all those above it in the table. Typically people only report species up to the one that brings "cumulative" over 0.7. "p" is a p-value for that species based on permutation tests. "mean_start" is the mean cover of that species in the starting year(s), and "mean_end" is the mean cover of the species in the last year(s) of monitoring.  
+
+
+```{r show-simper, results = 'asis', eval = datEnough}
+for(i in seq_along(simps)){
+    print(kbl_nmst(x = simps[[i]], 
+                   caption = paste0(names(simps)[i], " SIMPER results; PERMANOVA p = ", round(pmvs_summ$p.value[i], 3)),
+                   digits = 4)
+    )
+}
+```
+
+## NMDS  
+
+```{r, results = "asis"}
+# if there weren't enough years of data, can't do the rest.
+# set up to NOT evaluate code chunks, and spit out a message.
+datEnough <- nrow(dat_multivar) > 0
+
+if(!datEnough){
+    cat("### **Multivariate analyses were not run.**")
+    cat("\n \nThere were not enough rows of data.")
+}
+```
+
+
+```{r stats-run-nmds, eval = datEnough}
+    mds_resp <- metaMDS(resp_pm, distance = "bray", k = 3,
+                        autotransform = FALSE, trace = 0)
+
+    data.scores <- as.data.frame(scores(mds_resp)$sites)
+    species.scores <- as.data.frame(scores(mds_resp)$species)
+    species.scores$species <- rownames(species.scores) 
+    
+    # only keep the species/groups listed as reserve choices, to reduce clutter on graphic
+    # first get everything to group
+    species.scores <- species.scores %>% 
+        left_join(species_info, by = c("species" = "Species")) %>% 
+        mutate(Species_or_Group = case_when(species %in% choices ~ species,
+                                            Plant_Categories %in% choices ~ Plant_Categories,
+                                            NMST_Groupings %in% choices ~ NMST_Groupings,
+                                            Cover_Categories %in% choices ~ Cover_Categories,
+                                            .default = "Other")) %>% 
+        filter(Species_or_Group %in% choices) %>% 
+        select(species = Species_or_Group,
+               NMDS1,
+               NMDS2,
+               NMDS3)
+    
+    # then find centroids for the species-or-groups
+    species.scores <- aggregate(cbind(NMDS1, NMDS2, NMDS3) ~ species, data = species.scores, FUN = mean)
+    
+    # data.scores$Vegetation_Zone <- expl$Vegetation_Zone
+    # data.scores$Year <- expl$Year
+    data.scores <- data.scores %>%
+        mutate(Zone = expl_pm$Vegetation_Zone,
+               Year = as.factor(expl_pm$Year),
+               Time_group = as.factor(expl_pm$Time_group),
+               Zone_Timegroup = as.factor(expl_pm$Zone_Timegroup)) %>% 
+        separate(Zone, into = c("Zone_abbrev", "Zone_full"),
+                 sep = "-")  
+```
+
+***  
+
+Final 3-dimensional NMDS stress was **`r ifelse(datEnough, round(mds_resp$stress, 4), "NMDS not run")`**.  
+
+#### How to read these NMDS plots  
+
+-  Large points represent the centroid for each Vegetation Zone/Time period combination. They are labelled with the Vegetation Zone abbreviation and 'Start' or 'End'. Additionally, they are colored by Vegetation Zone and shaped by 'Start' vs. 'End' time periods. Upon hover, the full Vegetation Zone name and year(s) represented will be provided.  
+-  Black arrows and text represent Species or Categories of vegetation (e.g. H-Halophyte) identified by the reserve. Hovering over the arrow will provide the Species or Category name.  
+-  Small points represent individual plots and are colored by Vegetation Zone and shaped by 'Start' vs. 'End' time periods (shapes and colors match the large points above); hovering does not yield output for points.  
+-  Some identified loading factors may not appear as arrows; this is usually because all data points for that species were 0. They may also have been too low to have produced species scores in the NMDS.  
+
+
+```{r stats-prep-nmds-groups, eval = datEnough}
+# get centroids for each time/zone group
+# https://stackoverflow.com/a/47523181
+cent <- aggregate(cbind(NMDS1, NMDS2, NMDS3) ~ Zone_Timegroup, data = data.scores, FUN = mean)
+
+en_coord_cat <- cent %>%
+    separate(Zone_Timegroup, into = c("Zone", "Time_group"),
+             sep = "; ") %>%
+    left_join(keeps2,
+              by = c("Zone" = "Vegetation_Zone",
+                     "Time_group")) %>% 
+    separate(Zone, into = c("Zone_abbrev", "Zone_full"),
+             sep = "-") %>%
+    mutate(Zone_Timegroup = paste(Zone_abbrev, Time_group),
+           Zone_Years = paste(Zone_full, Years, sep = ": "))
+```
+
+
+
+```{r stats-graph-nmds-centroids, fig.width = 7, fig.height = 7, eval = datEnough}
+p <- plot_nmds()
+girafe(ggobj = p,
+       width_svg = 6,
+       height_svg = 5,
+       width = 0.8,
+       height = 0.6
+       )
+# geom_text_repel is not yet implemented in plotly
+
+p2 <- plot_nmds(axes = c(1, 3))
+girafe(ggobj = p2,
+       width_svg = 6,
+       height_svg = 5,
+       width = 0.8,
+       height = 0.6)
+
+p3 <- plot_nmds(axes = c(2, 3))
+girafe(ggobj = p3,
+       width_svg = 6,
+       height_svg = 5,
+       width = 0.8,
+       height = 0.6)
+
+```
+
+
