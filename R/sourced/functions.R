@@ -410,6 +410,7 @@ pivot_to_cdmo <- function(data){
             Cover,
             any_of(c("Density")),  # might not be present
             ends_with("Height"),   # is okay present and will capture variations. also okay to not be present.
+            -Orthometric_Height,
             QAQC
         ) %>% 
         arrange(Date, SiteID, TransectID, PlotID, Species)

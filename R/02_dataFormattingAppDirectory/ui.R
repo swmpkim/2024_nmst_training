@@ -126,7 +126,7 @@ ui <- fluidPage(
                                               selected = "Cover Sheet"),
                                  br(),
                                  # action buttion to submit choices and generate preview
-                                 actionButton("col.choices_made", "Submit")
+                                 actionButton("col.choices_made", "Use these choices")
                              ),
                              mainPanel(
                                  
