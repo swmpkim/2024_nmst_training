@@ -64,10 +64,6 @@ ui <- fluidPage(
                                              choices = NULL,
                                              multiple = TRUE),
                                  br(),
-                                 radioButtons("htdens", 
-                                              label = "Include Height and Density?",
-                                              choices = c("yes", "no")),
-                                 br(),
                                  actionButton("choices_made", "Reshape!"),
                                  br()
                                  ),
@@ -125,7 +121,7 @@ ui <- fluidPage(
                                               choices = c("Station Table", "Cover Sheet"),
                                               selected = "Cover Sheet"),
                                  br(),
-                                 # action buttion to submit choices and generate preview
+                                 # action button to submit choices and generate preview
                                  actionButton("col.choices_made", "Use these choices")
                              ),
                              mainPanel(

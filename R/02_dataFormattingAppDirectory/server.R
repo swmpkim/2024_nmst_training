@@ -21,9 +21,7 @@ server <- function(input, output, session) {
     dat <- reactive({
         req(input$file)
         tmp <- get_data(input$file$datapath, 
-                        cover_only = ifelse(input$htdens == "yes",
-                                            FALSE,
-                                            TRUE),
+                        cover_only = FALSE,
                         keep_all_cols = TRUE)
         tmp <- tmp %>%
             mutate(across(c(Year, Month, Day), as.integer))
@@ -199,7 +197,9 @@ server <- function(input, output, session) {
         latlongs <- stns  %>% 
             dplyr::select(SiteID, TransectID, PlotID, 
                    Latitude, Longitude) %>% 
-            dplyr::distinct()
+            dplyr::distinct() %>% 
+            dplyr::mutate(Latitude = round(Latitude, 5),
+                          Longitude = round(Longitude, 5))
         
         tmp <- left_join(tmp, latlongs,
                          by = c("SiteID", "TransectID", "PlotID")) %>% 
@@ -293,7 +293,11 @@ server <- function(input, output, session) {
             dplyr::select(SiteID, TransectID, PlotID, Type, `SSAM-1`) %>% 
             dplyr::summarize(.by = c(SiteID, TransectID, PlotID),
                              Type = paste(unique(Type), collapse = ", "),
-                             `SSAM-1` = paste(unique(`SSAM-1`), collapse = ", ")) 
+                             `SSAM-1` = paste(unique(`SSAM-1`), collapse = ", ")) %>% 
+            dplyr::mutate(Type = case_when(Type == "NA" ~ NA_character_,
+                                           .default = Type),
+                          `SSAM-1` = case_when(`SSAM-1` == "NA" ~ NA_character_,
+                                               .default = `SSAM-1`))
         
         tmp <- left_join(tmp, stn_remainings)
         
@@ -311,6 +315,12 @@ server <- function(input, output, session) {
         }
         if(!("Average Canopy Height") %in% names(tmp)){
             tmp$`Average Canopy Height` <- NA
+        }
+        
+        # deal with Density, which may not be present if there were 
+        # no density measurements in a year
+        if(!("Density") %in% names(tmp)){
+            tmp$Density <- NA
         }
         
         # put it all in order
